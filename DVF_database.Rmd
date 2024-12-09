@@ -1,0 +1,197 @@
+---
+title: "DVF_Cleansing"
+author: "André Miranda"
+date: "2024-07-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Creating the database
+We start by loading the necessary libraries…
+```{r}
+# Load packages
+library(xtable)
+library(haven)
+library(foreign)
+library(ggplot2)
+library(dplyr)
+library(data.table) # to load large datasets
+library(sf) # spatial data
+library(sp)
+library(DescTools) # for Winsorzation
+library(VIM) # for kNN
+library(spdep) # for kNN weights
+```
+
+and the data set for the shape of Ile de France
+```{r}
+# Municipalities' shapes and boundaries
+paris_shape <- st_read("/Users/andre/Desktop/Diff-in-disc/Application/communes-dile-de-france-au-01-janvier/communes-dile-de-france-au-01-janvier.shp")
+```
+
+## Borders
+As we're only interested in municipalities surrounding Paris as well as the city of Paris itself to evaluate the effects of the "Encadrement des Loyers policy". This policy was put into work in Paris in July of 2019 and in the regions of Plaine Commune (in place in June 2021) and Est-Ensemble (December 2021) from the Department of Seine-Saint-Denis.
+```{r}
+# Filter the database to the area of interest and only properties that have latitude and longitude coordinates
+regions_list <- c("Neuilly-sur-Seine", "Levallois-Perret", "Clichy", "Saint-Ouen", "Saint-Denis", "Aubervilliers", "Pantin", 
+                  "Le Pré-Saint-Gervais", "Les Lilas", "Bagnolet", "Montreuil", "Saint-Mandé", "Vincennes", "Fontenay-sous-Bois", 
+                  "Nogent-sur-Marne", "Joinville-le-Pont", "Saint-Maurice", "Charenton-le-Pont", "Ivry-sur-Seine",
+                  "Le Kremlin-Bicêtre", "Gentilly", "Montrouge", "Malakoff", "Vanves", "Issy-les-Moulineaux", 
+                  "Boulogne-Billancourt", "Saint-Cloud", "Suresnes", "Puteaux")
+```
+
+Now we need to extract Paris' borders to later calculate properties' distance to the border
+```{r}
+# Same process for the communes database
+paris_shape <- paris_shape %>%
+  filter(numdep==75 | nomcom %in% regions_list)
+
+paris_shape <- st_transform(paris_shape, crs = 2154)
+
+# Plot
+plot(paris_shape)
+
+paris_shape$area_type <- ifelse(paris_shape$numdep == 75, "Paris", "Outside Paris")
+
+ggplot(data = paris_shape) +
+  geom_sf(aes(fill = area_type), color = "darkblue", size = 0.3) +
+  scale_fill_manual(values = c("Paris" = "lightblue", "Outside Paris" = "lightgreen")) +
+  theme_minimal() +
+  labs(
+    title = "Map of Paris and Surrounding Regions",
+    subtitle = "Differentiating Paris and Nearby Suburbs",
+    caption = "Data: Paris and Surrounding Areas",
+    fill = "Area Type"  # Custom legend title
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 20),  # Increased title size
+    plot.subtitle = element_text(hjust = 0.5, size = 16),  # Increased subtitle size
+    plot.caption = element_text(hjust = 0.5, size = 12),
+    legend.title = element_text(size = 18, face = "bold"),  # Increased legend title size
+    legend.text = element_text(size = 14),  # Increased legend text size
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "lightgray", color = NA)
+  )
+```
+
+```{r}
+# Extract Paris borders (numdep = 75 for Paris)
+paris_borders <- st_union(paris_shape[paris_shape$numdep == 75, ])
+
+# Create linestring object so obs. inside the polygon are not considered as distance = 0
+paris_borders <- paris_borders %>%
+  st_geometry() %>%
+  st_cast("LINESTRING")
+
+plot(paris_borders)
+```
+Calculate the distances from then properties to the border and add them to the DVF dataframe
+
+## Create the complete DVF database
+```{r}
+# Load DB
+dvf_2k19 <- fread("/Users/andre/Desktop/Diff-in-Disc/Application/DVF/2019_full.csv")
+dvf_2k20 <- fread("/Users/andre/Desktop/Diff-in-Disc/Application/DVF/2020_full.csv")
+dvf_2k21 <- fread("/Users/andre/Desktop/Diff-in-Disc/Application/DVF/2021_full.csv")
+
+# Filter from 06/2021 onwards
+dvf_2k21 <- dvf_2k21 %>%
+  filter(date_mutation < "2021-06-01" )
+
+# Combine
+DVF_full <- rbind(dvf_2k19, dvf_2k20, dvf_2k21)
+
+# Include only communes of interest
+DVF_full <- DVF_full %>%
+  filter(code_departement==75 | nom_commune %in% regions_list)
+
+delta_na <- (nrow(DVF_full %>% 
+                         filter(!is.na(longitude) & !is.na(latitude)))
+                  -nrow(DVF_full)) /nrow(DVF_full) # -0.00920149224813029
+
+DVF_full <- DVF_full %>% 
+  filter(!is.na(longitude) & !is.na(latitude)) 
+
+# Create a db with a variable indicating the coordinates
+properties_sf <- st_as_sf(DVF_full, coords = c("longitude", "latitude"), crs = 4326)
+properties_sf <- st_transform(properties_sf, crs = st_crs(paris_borders))
+
+# Calculate distances
+distances <- st_distance(properties_sf, paris_borders)
+
+# Add distances to properties data
+DVF_full$distance_to_border <- as.numeric(distances) # distance is in meters
+```
+
+## Cleaning the data
+We'll combine the three databases to have a complete data frame of all observations from 2019 to pre-June-2021.
+
+### Filter observations
+We're only interested on the effect in apartments due to the fact that the sq meter of a house is usually more expensive. We also only look at sales of real estate. We avoid future constructions and/or land as a sale of a "future state of an apartment" generally refers to new buildings so more expensive which is not representative of the mean (same for houses).
+
+```{r}
+# We only focus on Apartment sales
+DVF_full <- DVF_full %>% filter(type_local=="Appartement",
+                                nature_mutation=="Vente")
+N <- nrow(DVF_full)
+```
+
+### Group by transaction 
+There are many instances where a single transaction (of multiple surfaces) is registered as multiple ones. Thus we regroup those "multiple" transactions into a single observation.
+```{r}
+# Group by id_mutation and calculate total built area and mean price
+grouped_DVF <- DVF_full %>%
+  group_by(id_mutation) %>%
+  summarise(
+    date_mutation = first(date_mutation),
+    code_postal = first(code_postal),
+    nom_commune = first(nom_commune),
+    code_departement = first(code_departement),
+    longitude = first(longitude),
+    latitude = first(latitude),
+    distance_to_border = mean(distance_to_border),
+    total_surface_reelle_bati = sum(surface_reelle_bati, na.rm = TRUE),
+    valeur_fonciere = mean(valeur_fonciere, na.rm = TRUE),
+    unique_price_count = n_distinct(valeur_fonciere)
+  ) %>%
+  mutate(
+    price_per_sqm = valeur_fonciere / total_surface_reelle_bati
+  )
+
+# prctg of observations lost in the grouping
+delta <- (nrow(grouped_DVF)-N)/N
+
+# Check if all prices are the same for each id_mutation
+all(grouped_DVF$unique_price_count == 1)
+```
+If the output is true, it means that we can group data correctly and all prices are correctly indexed.
+
+
+### Transform outliers
+We winsorize the top 3% and bottom 3% of the observations. 
+We also replace the NAs in the price_per_sqm by using the K Neareast Neighbours method.
+```{r}
+# Winsorize outliers (to realistic standards of the Price.m^-2)
+grouped_DVF <- grouped_DVF %>%
+  mutate(price_per_sqm = Winsorize(price_per_sqm, 
+                                     probs = c(0.03, 0.97), na.rm = T))
+# Treat NAs with KNN 
+grouped_DVF <- kNN(grouped_DVF, variable = "price_per_sqm", k=5)
+
+# No need for VF, unique_price_count (which was used just to check) nor total surface
+grouped_DVF <- grouped_DVF %>%
+  select(-valeur_fonciere, -total_surface_reelle_bati, 
+         -unique_price_count, -price_per_sqm_imp, -code_postal)
+
+```
+
+
+```{r}
+# Combine the three data frames
+write.csv(grouped_DVF, "~/Desktop/Diff-in-Disc/Application/DVF/grouped_DVF.csv")
+```

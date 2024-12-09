@@ -1,0 +1,146 @@
+---
+title: "data_generation"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-03-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Set up and data generation
+## Packages
+```{r}
+library(dplyr)
+library(rdrobust)
+library(tidyverse)
+```
+
+## Base parameters and variables
+We generate data to determine the prices per squared meter in Paris and Issy les Moulineaux. 
+```{r}
+# Base parameters and variables
+n_properties <- 10000
+n_years <- 6
+N <- n_properties * n_years
+
+# Property IDs repeated across years
+PropertyID <- rep(1:n_properties, each = n_years)
+
+# Year variable (repeating for each property)
+Year <- rep(1:n_years, n_properties)
+
+# Values > 0 are in Paris, values < 0 are in Issy
+# Simulate x and y coordinates
+set.seed(123)
+X_axis <- runif(n_properties, min = 0, max = 4000)
+
+set.seed(123)
+Y_axis <- runif(n_properties, min = -2000, max = 3000)
+
+# Ensure that x and y are repeated across each year for consistency
+X_axis <- rep(X_axis, each = n_years)
+Y_axis <- rep(Y_axis, each = n_years)
+
+# Determine Region based on y coordinate
+Region <- ifelse(Y_axis > 0, "Paris", "Issy")
+
+# Combine all the information into a data frame
+data <- data.frame(PropertyID, Year, X_axis, Y_axis, Region)
+data <- data %>%
+  mutate(Distance_to_Border = Y_axis,
+         Treatment = ifelse(Region == "Paris" & Year >= 3, 1, 0))
+```
+
+```{r}
+# Calculate price
+beta0 <- 10000
+beta_t <- 350 # Treatment effect
+beta1 <- 500 # Shared determinant
+beta2 <- -1.7 # Continuous determinant
+beta3 <- 200 # Discontinuous determinant
+beta4 <- 50 # Local Parallel Trend
+
+data <- data %>%
+  mutate(Price_m2 = beta0 + beta_t * Treatment)
+
+head(data)
+```
+
+## Common price determinant in Issy and Paris (Balcony in the property)
+```{r}
+set.seed(123)
+balcony_indc <- sample(c(0, 1), size = n_properties, replace = TRUE, prob = c(0.7, 0.3))
+balcony_indc <- rep(balcony_indc, each = n_years)
+data <- data %>%
+  mutate(Balcony_indc = balcony_indc) %>%
+  mutate(Price_m2 = beta0 + beta1 * Balcony_indc + beta_t * Treatment)
+```
+
+
+## Border Continuous Determinant in the Price (distance to Eiffel Tower)
+We set up the distance to the Eiffel Tower as a Cartesian Distance assuming the Eiffel Tower to be at the coordinates (0;3400).
+```{r}
+data <- data %>%
+  mutate(Distance_to_EiffelTower = sqrt(X_axis^2 + (Y_axis - 3400)^2),
+         Price_m2 = beta0 + beta1 * Balcony_indc + beta2 * Distance_to_EiffelTower + beta_t * Treatment)
+```
+
+## Discontinuous Determinant in the Price (access to the metro)
+```{r}
+data <- data %>%
+  mutate(Metro_access = ifelse(Region == "Paris", 1, 0),
+         Price_m2 = beta0 + beta1 * Balcony_indc + beta2 * Distance_to_EiffelTower + beta3 * Metro_access + beta_t * Treatment)
+```
+
+## Price Determinant following a Local Parallel Trend (real estate speculation)
+```{r}
+# Price Determinant following a Local Parallel Trend (real estate speculation)
+border_range <- 500
+initial_local_trend_value <- 100
+local_growth_rate <- 0.04  # Assuming a 4% annual local trend growth
+
+data <- data %>%
+  mutate(Local_Trend = ifelse(abs(Distance_to_Border) <= border_range & Year == 1, initial_local_trend_value, 200))
+
+for (year in 2:n_years) {
+  data <- data %>%
+    group_by(PropertyID) %>%
+    mutate(Local_Trend = ifelse(Year == year & abs(Distance_to_Border) <= border_range, lag(Local_Trend) * (1 + local_growth_rate), Local_Trend)) %>%
+    ungroup()
+}
+
+for (year in 2:n_years) {
+  data <- data %>%
+    group_by(PropertyID) %>%
+    mutate(Local_Trend = ifelse(Year == year & Distance_to_Border > border_range, lag(Local_Trend) * (1 + 0.08), Local_Trend)) %>%
+    ungroup()
+}
+
+for (year in 2:n_years) {
+  data <- data %>%
+    group_by(PropertyID) %>%
+    mutate(Local_Trend = ifelse(Year == year & Distance_to_Border < - border_range, lag(Local_Trend) * (1 + 0.06), Local_Trend)) %>%
+    ungroup()
+}
+
+data <- data %>%
+  mutate(Price_m2 = beta0 + beta1 * Balcony_indc + beta2 * Distance_to_EiffelTower + beta3 * Metro_access + beta4 * Local_Trend + beta_t * Treatment)
+```
+
+## Noise
+```{r}
+# Disrupt the Grembi regression => double the noise in the post-treatment period
+noise_level <- 50
+data$asymmetric_noise <- ifelse(data$Year > 3, rnorm(N, 0, noise_level*2), rnorm(N, 0, noise_level))
+
+# Update prices
+data <- data %>%
+  mutate(Price_m2 = beta0 + beta1 * Balcony_indc + beta2 * Distance_to_EiffelTower + beta3 * Metro_access + beta4 * Local_Trend + beta_t * Treatment + asymmetric_noise)
+
+```
+
+```{r}
+write.csv(data, "~/Desktop/Diff-in-Disc/Simulation/sim_data.csv")
+```
