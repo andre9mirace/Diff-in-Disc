@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Never touch line endings in binary files
+*.pdf  binary
+*.pptx binary
+*.png  binary
+*.jpg  binary
+*.shp  binary
+*.shx  binary
+*.dbf  binary
