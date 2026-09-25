@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# R session files (can be hundreds of MB; never needed in the repo)
+.RData
+.RDataTmp
+.Rhistory
+.Rapp.history
+
+# RStudio
+.Rproj.user/
+
+# R Markdown / knitr outputs
+*_cache/
+*_files/
+
+# renv (the lockfile is versioned, the installed library is not)
+renv/library/
+renv/staging/
+renv/local/
+
+# Raw DVF extracts (~1 GB, download from data.gouv.fr; see README)
+Application/DVF/*_full.csv
