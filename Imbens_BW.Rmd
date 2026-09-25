@@ -1,0 +1,90 @@
+---
+title: "Imbens BW"
+output: html_document
+date: "2024-05-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initialise
+```{r}
+library(dplyr)
+df <- read.csv('~/Desktop/Diff-in-Disc/Simulation/sim_data.csv')
+```
+
+# Bandiwdth Function
+```{r}
+Imbens_BW <- function(y, x, c, kernel="triangular"){
+  
+  df <- data.frame(y=y, x=x)
+  df <- na.omit(df)
+  N <- nrow(df)
+  
+  # Uniform kernel
+  if (kernel == "uniform") {
+   C_k <- 5.40
+  } 
+    # Triangular kernel as default
+  else {
+    C_k <- 3.4375
+  }
+
+  # Prepare the df for regression
+  df$group_indc <- ifelse(df$x>c, 1, 0) # group indicator for regression
+  df$x1 <- (df$x-c)
+  df$x2 <- (df$x-c)^2
+  df$x3 <- (df$x-c)^3
+  
+  # Subset into left/right of the cutoff
+  sample_plus <- subset(df, x > c)
+  sample_minus <- subset(df, x < c)
+  N_plus <- nrow(sample_plus)
+  N_minus <- nrow(sample_minus)
+  
+  # First step
+  # We first estimate the running variable's density and the limit of the conditional variances at the cutoff 
+  
+  h1 <- 1.84*sd(x)*N^(-1/5) # Standard Silverman rule of thumb
+  silver_sample_plus <- subset(sample_plus, x < c+h1)
+  silver_sample_minus <- subset(sample_minus, x > c-h1)
+  
+  running_density_c <- (nrow(silver_sample_minus)+nrow(silver_sample_plus))/(2*N*h1) # Density of X at the cutoff
+  
+  # Conditional variance limits (c+ and c-)
+  cond_var_c_plus <- var(silver_sample_plus$y)
+  cond_var_c_minus <- var(silver_sample_minus$y)
+  
+  # Second step
+  # Estimation of two bandwidths to estimate the second order derivative.
+
+  # Quadratic regression
+  reg_m3 <- lm(y ~ group_indc + x1 + x2 + x3, data = df) # maybe adding time_indc for DiRD?
+  
+  m3_c <- 6*coef(reg_m3)[[5]] # estimate of the 3rd derivative to the regression function 
+
+  
+  h2_plus <- 3.56*((cond_var_c_plus)/(running_density_c*(m3_c)^2*N_plus))^(1/7)
+  h2_minus <- 3.56*((cond_var_c_minus)/(running_density_c*(m3_c)^2*N_minus))^(1/7)
+  
+  sample_2_plus <- subset(sample_plus, sample_plus$x < c+h2_plus)
+  sample_2_minus <- subset(sample_minus, sample_minus$x > c-h2_minus)
+  
+  
+  # Quadratic regression to estimate 
+  quad_reg_plus <- lm(y ~ x1 + x2, data = sample_2_plus)
+  quad_reg_minus <- lm(y ~ x1 + x2, data = sample_2_minus)
+  
+  m2_plus <- 2*coef(quad_reg_plus)[[3]]
+  m2_minus <- 2*coef(quad_reg_minus)[[3]]
+
+  # Third step
+  r_plus <- 2160*cond_var_c_plus/(nrow(sample_2_plus)*h2_plus^4)
+  r_minus <- 2160*cond_var_c_minus/(nrow(sample_2_minus)*h2_minus^4)
+  
+  h_optimal <- C_k*N^(-1/5)*((cond_var_c_plus+cond_var_c_minus)
+                             /(running_density_c*(m2_plus-m2_minus)^2+r_plus+r_minus))^(1/5)
+  return(h_optimal)
+}
+```

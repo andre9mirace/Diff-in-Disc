@@ -1,0 +1,225 @@
+---
+title: "Eval_methods"
+output:
+  pdata_document: default
+  html_document: default
+date: "2024-03-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Package Installation
+```{r}
+library(dplyr)
+library(rdrobust)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+```
+
+```{r}
+# Load data from the simulated database
+data <- read.csv('~/Desktop/Diff-in-Disc/Simulation/sim_data.csv')
+df <- data
+```
+# Treatment estimation methods
+## Diff-in-diff
+We set up treatment group and treatment period indicators and an interaction term to do a DiD regression
+```{r}
+# Create a dummy variable to indicate the time when the treatment started
+data <- data %>%
+  mutate(time_indc = ifelse(Year >= 3, 1, 0),
+         treated_indc = ifelse(Region == 'Paris', 1, 0),
+         did = time_indc * treated_indc)
+
+# DiD Regression 
+didreg <- lm(Price_m2 ~ treated_indc + time_indc + did, data = data)
+summary(didreg)
+
+coef_did <- didreg$coefficients[[4]]
+```
+
+## Regression Discontinuity
+```{r}
+rdd <- rdrobust(y = data$Price_m2,
+                x = data$Distance_to_Border, 
+                all = T,
+                subset = data$Year == 3,
+                )
+summary(rdd)
+coef_rdd <- rdd$Estimate[[2]]
+```
+
+## Biased Diff-in-Disc
+```{r}
+# Diff-in-Disc over the entire sample
+grembi_equation <- Price_m2 ~ Distance_to_Border + treated_indc*(1+Distance_to_Border)+time_indc*(1+Distance_to_Border) +did*(1+Distance_to_Border)
+
+# Run regression
+biased_grembi <- lm(formula = grembi_equation, data = data)
+coef_grembi_no_bw <- biased_grembi$coefficients[[4]]
+summary(biased_grembi)
+```
+
+## Biased Results summary
+```{r}
+# Save in vectors
+Biased_coefs <- c(coef_did, coef_rdd, coef_grembi_no_bw)
+Bias_vec <- c(coef_did-350, coef_rdd-350, coef_grembi_no_bw-350)
+
+biased_methods <- data.frame(
+  Coefficient = Biased_coefs,
+  Bias = Bias_vec)
+
+rownames(biased_methods) <- c("Diff-in-Diff", "RDD", "Full-sample Regression")
+
+# Presentations table
+kable(biased_methods, caption = "Estimation of the Treatment effect with different methods") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = F, 
+                position = "center")
+```
+
+
+```{r}
+ggplot(data %>% filter(Year==3)) + 
+  aes(y=Price_m2, x=Distance_to_Border) + 
+  geom_point()
+```
+
+# Diff-in-Disc
+
+## AVG BW
+### Triangular Kernel
+```{r}
+# Get BW for pre and post-treatment
+rdd_before_tri <- rdrobust(y = data$Price_m2, x = data$Distance_to_Border, all = T,
+                subset = data$Year<3, kernel = "tri")
+rdd_after_tri <- rdrobust(y = data$Price_m2, x = data$Distance_to_Border, all = T,
+                subset = data$Year >=3, kernel = "tri")
+
+# Construct BW by averaging both bandwidths
+left_bw_tri <- rdd_before_tri$bws[1]
+right_bw_tri <- rdd_after_tri$bws[1]
+optimal_bw_avg_tri <- (left_bw_tri+right_bw_tri)/2
+
+# Perform the regression
+w_tri_avg <- rdd_k_weights(x=data$Distance_to_Border, c=0, h=optimal_bw_avg_tri, 
+                           kernel = "triangular")
+
+grembi_model_tri <- lm(formula = grembi_equation, data = data,
+                       subset = abs(Distance_to_Border) < optimal_bw_avg_tri,
+                       weights = w_tri_avg)
+
+avg_bw_coef_tri <- grembi_model_tri$coefficients[[5]] # save coef
+```
+
+### Uniform Kernel
+```{r}
+# Repeat the procedure
+rdd_before_uni <- rdrobust(y = data$Price_m2, x = data$Distance_to_Border, all = T,
+                subset = data$Year<3, kernel = "uni")
+
+rdd_after_uni <- rdrobust(y = data$Price_m2, x = data$Distance_to_Border, all = T,
+                subset = data$Year >=3, kernel = "uni")
+
+# Same for the BW
+left_bw_uni <- rdd_before_uni$bws[1]
+right_bw_uni <- rdd_after_uni$bws[1]
+optimal_bw_avg_uni <- (left_bw_uni+right_bw_uni)/2
+
+# Same for regression
+w_uni_avg <- rdd_k_weights(x=data$Distance_to_Border, c=0, h=optimal_bw_avg_uni, 
+                           kernel = "uniform")
+
+grembi_model_uni <- lm(formula = grembi_equation, data = data,
+                       subset = abs(Distance_to_Border) < optimal_bw_avg_uni,
+                       weights = w_uni_avg)
+
+avg_bw_coef_uni <- grembi_model_uni$coefficients[[5]] # save coef
+```
+
+## Imbens Plug-in Bandwidth
+### Triangular Kernel
+```{r}
+# Get bandwidth
+h_imbens_tri <- Imbens_BW(y=data$Price_m2, x=data$Distance_to_Border,
+                       c=0, kernel = "triangular")
+# Get weights
+w_tri_imbens <- rdd_k_weights(x=data$Distance_to_Border, c=0, h=h_imbens_tri)
+
+# Run the regression
+tri_imbens <- lm(formula = grembi_equation, data = data,
+                 subset = abs(Distance_to_Border) < h_imbens_tri, 
+                 weights = w_tri_imbens)
+imbens_coef_tri <- tri_imbens$coefficients[[5]] # save coef
+```
+
+### Uniform kernel 
+```{r}
+# Idem
+h_imbens_uni <- Imbens_BW(y=data$Price_m2, x=data$Distance_to_Border,
+                       c=0, kernel = "uniform")
+
+w_uni_imbens <- rdd_k_weights(x=data$Distance_to_Border, c=0, h=h_imbens_uni, 
+                              kernel = "uniform")
+
+uni_imbens <- lm(formula = grembi_equation, data = data,
+                 subset = abs(Distance_to_Border) < h_imbens_uni, 
+                 weights = w_uni_imbens)
+
+imbens_coef_uni <- uni_imbens$coefficients[[5]] # save coef
+
+```
+
+## Adaptive SGD
+### Triangular kernel
+```{r}
+# Same steps as before
+BW_T <- DiRD_BW(y=data$Price_m2, x=data$Distance_to_Border, c=0, t0=3,
+                time_var = data$Year, ID=data$PropertyID)$optimal_h[1]
+
+# Weights
+w_tri_sgd <- rdd_k_weights(x=data$Distance_to_Border, c=0, h=BW_T, kernel = "triangular")
+
+# Regression and coef
+reg_tri_sgd <- lm(formula = grembi_equation, data = data, 
+                  subset = abs(Distance_to_Border) < BW_T, weights = w_tri_sgd)
+reg_tri_sgd_coef <- reg_tri_sgd$coefficients[[5]]
+```
+
+### Uniform kernel 
+```{r}
+# Idem
+BW_U <- DiRD_BW(y=data$Price_m2, x=data$Distance_to_Border, c=0, t0=3,
+                time_var = data$Year, ID=data$PropertyID, kernel = "uniform")$optimal_h[1]
+
+w_uni_sgd <- rdd_k_weights(x=data$Distance_to_Border, c=0, h=BW_U, kernel = "uniform")
+
+unif_sgd <- lm(formula = grembi_equation, data = data, 
+               subset = abs(Distance_to_Border) < BW_U,
+               weights = w_uni_sgd)
+
+unif_sgd_coef <- unif_sgd$coefficients[[5]]
+```
+
+# Results summary
+```{r}
+# Create the data frame
+bw_and_coef_table <- data.frame(
+  Kernel = c("Triangular", "Uniform", "Triangular", "Uniform", "Triangular", "Uniform"),
+  `Imbens Plug-in Bandwidth Estimator` = c(h_imbens_tri, h_imbens_uni, NA, NA, NA, NA),
+  `AVG of 2 bandwidths` = c(NA, NA, optimal_bw_avg_tri, optimal_bw_avg_uni, NA, NA),
+  `Adaptive SGD` = c(NA, NA, NA, NA, BW_T, BW_U),
+  `Treatment Effect` = c(imbens_coef_tri, imbens_coef_uni, avg_bw_coef_tri, avg_bw_coef_uni, reg_tri_sgd_coef,
+                         unif_sgd_coef)
+)
+
+# Print the table
+kable(bw_and_coef_table,
+      col.names = c("Kernel", "Imbens Plug-in Bandwidth Estimator", 
+                    "AVG of 2 bandwidths", "Adaptive SGD", "Treatment Effect"))
+
+```
+

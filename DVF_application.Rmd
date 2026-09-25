@@ -1,0 +1,689 @@
+---
+title: "Analysis"
+author: "André Miranda"
+date: "2024-07-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Analysis for Treatment Effect Estimation
+We start by loading the necessary libraries…
+```{r}
+# Load packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(leaflet)
+library(RColorBrewer)
+library(data.table) # to load large datasets
+library(sf) # spatial data
+library(rdrobust)
+library(kableExtra)
+library(e1071)  # For skewness function
+library(tidyverse)
+library(rgeoda) # for maxp_tabu
+```
+
+Load data
+```{r}
+grouped_DVF <- fread("~/Desktop/Diff-in-Disc/Application/DVF/grouped_DVF.csv")
+grouped_DVF <- grouped_DVF%>%select(-V1)
+```
+
+```{r}
+# Running variable
+grouped_DVF$Running_variable <- ifelse(grouped_DVF$code_departement==75,
+                                    grouped_DVF$distance_to_border,
+                                    grouped_DVF$distance_to_border*(-1))
+# Plot the data by distance to border
+hist(grouped_DVF$Running_variable, main = "Histogram of Running Variable",
+     xlab = "Running Variable", breaks = 50, col = "lightblue")
+
+grouped_DVF %>% filter(Running_variable < -1e+05) 
+```
+
+```{r}
+# Eliminate extremely far obs.
+N_2<- nrow(grouped_DVF)
+
+grouped_DVF <- grouped_DVF %>%
+  filter(Running_variable > -1e+05)
+
+delta_2 <- (nrow(grouped_DVF)-N_2)/N_2
+```
+
+# Descriptive stats
+We go over the data and explore it
+
+
+### Interactive Map
+We start by creating an interactive map
+```{r}
+# Create the year variable
+grouped_DVF$year <- as.factor(format(grouped_DVF$date_mutation, "%Y"))
+
+# Define the color palette
+
+year_palette <- colorFactor(c("red","green","blue"), domain = grouped_DVF$year)
+
+# Create the leaflet map
+leaflet(grouped_DVF) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    lng = ~longitude, 
+    lat = ~latitude,
+    fillColor = ~year_palette(year), 
+    fillOpacity = 2,
+    color = "black",
+    weight = 1,
+    radius = 1.5  # Small radius for the points
+  ) %>%
+  addLegend(
+    pal = year_palette, 
+    values = ~year, 
+    title = "Year"
+  ) %>%
+  addScaleBar(position = "bottomleft")
+
+```
+
+
+
+
+### Stats desc for ppsqm
+```{r}
+summary(grouped_DVF)
+
+# Calculate summary statistics for price per square meter
+price_summary <- grouped_DVF %>%
+  summarise(
+    count = n(),
+    mean = mean(price_per_sqm, na.rm = TRUE),
+    median = median(price_per_sqm, na.rm = TRUE),
+    sd = sd(price_per_sqm, na.rm = TRUE),
+    min = min(price_per_sqm, na.rm = TRUE),
+    q25 = quantile(price_per_sqm, 0.25, na.rm = TRUE),
+    q75 = quantile(price_per_sqm, 0.75, na.rm = TRUE),
+    max = max(price_per_sqm, na.rm = TRUE),
+    skewness = skewness(price_per_sqm, na.rm = TRUE)
+  )
+
+# Round the numeric values for better readability
+price_summary <- price_summary %>%
+  mutate(across(where(is.numeric), round, 2))
+
+# Reshape data for better presentation
+price_summary_tidy <- price_summary %>%
+  pivot_longer(cols = everything(), names_to = "Statistic", values_to = "Value")
+
+# Create a nicely formatted table
+kable(price_summary_tidy, format = "html", 
+      col.names = c("Statistic", "Value")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
+                full_width = F, 
+                position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "black") %>%
+  kable_styling(font_size = 12)
+
+# Unique values
+unique_dates <- length(unique(grouped_DVF$date_mutation))
+unique_ids <- length(unique(grouped_DVF$id_mutation))
+
+# Distribution plots
+ggplot(grouped_DVF, aes(x = price_per_sqm)) +
+  geom_histogram(binwidth = diff(range(grouped_DVF$price_per_sqm)) / 50, fill = "skyblue", color = "white", alpha = 0.8) +
+  labs(title = "Histogram of Price per Square Meter",
+       x = "Price per Square Meter",
+       y = "Frequency") +
+  theme_minimal(base_size = 15) +  # Sets a larger base font size
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+        axis.title = element_text(size = 16, face = "bold"),
+        axis.text = element_text(size = 14),
+        panel.grid.major = element_line(color = "lightgrey"),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white", color = NA)) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.01)))
+
+ggplot(grouped_DVF, aes(x = Running_variable)) +
+  geom_histogram(binwidth = diff(range(grouped_DVF$Running_variable)) / 50, fill = "palegreen", color = "white", alpha = 0.8) +
+  labs(title = "Histogram of Running Variable",
+       x = "Running Variable",
+       y = "Frequency") +
+  theme_minimal(base_size = 15) +  # Sets a larger base font size
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+        axis.title = element_text(size = 16, face = "bold"),
+        axis.text = element_text(size = 14),
+        panel.grid.major = element_line(color = "lightgrey"),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white", color = NA)) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.01)))
+```
+
+### Stats desc for Running Variable
+```{r}
+# Create a binary variable indicating whether a property is inside Paris
+grouped_DVF <- grouped_DVF %>%
+  mutate(location = ifelse(grepl("Paris", nom_commune), "Inside Paris", "Outside Paris"))
+
+# Calculate summary statistics for Distance to Border inside Paris
+distance_inside_paris <- grouped_DVF %>%
+  filter(location == "Inside Paris") %>%
+  summarise(
+    count = n(),
+    mean = mean(distance_to_border, na.rm = TRUE),
+    median = median(distance_to_border, na.rm = TRUE),
+    sd = sd(distance_to_border, na.rm = TRUE),
+    min = min(distance_to_border, na.rm = TRUE),
+    q25 = quantile(distance_to_border, 0.25, na.rm = TRUE),
+    q75 = quantile(distance_to_border, 0.75, na.rm = TRUE),
+    max = max(distance_to_border, na.rm = TRUE),
+    skewness = skewness(distance_to_border, na.rm = TRUE)
+  ) %>%
+  mutate(location = "Inside Paris")
+
+# Calculate summary statistics for Distance to Border outside Paris
+distance_outside_paris <- grouped_DVF %>%
+  filter(location == "Outside Paris") %>%
+  summarise(
+    count = n(),
+    mean = mean(distance_to_border, na.rm = TRUE),
+    median = median(distance_to_border, na.rm = TRUE),
+    sd = sd(distance_to_border, na.rm = TRUE),
+    min = min(distance_to_border, na.rm = TRUE),
+    q25 = quantile(distance_to_border, 0.25, na.rm = TRUE),
+    q75 = quantile(distance_to_border, 0.75, na.rm = TRUE),
+    max = max(distance_to_border, na.rm = TRUE),
+    skewness = skewness(distance_to_border, na.rm = TRUE)
+  ) %>%
+  mutate(location = "Outside Paris")
+
+# Combine the two summaries into one table
+distance_summary <- bind_rows(distance_inside_paris, distance_outside_paris)
+
+# Round the numeric values for better readability
+distance_summary <- distance_summary %>%
+  mutate(across(where(is.numeric), round, 2))
+
+# Reshape data for better presentation
+distance_summary_tidy <- distance_summary %>%
+  pivot_longer(cols = -location, names_to = "Statistic", values_to = "Value")
+
+# Create a nicely formatted table
+kable(distance_summary_tidy, format = "html", 
+      col.names = c("Location", "Statistic", "Value")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
+                full_width = F, 
+                position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "black") %>%
+  kable_styling(font_size = 12) %>%
+  group_rows("Inside Paris", 1, 9) %>%
+  group_rows("Outside Paris", 10, 18)
+```
+
+
+```{r}
+# Calculate descriptive statistics per arrondissement
+arrondissement_stats <- grouped_DVF %>%
+  group_by(nom_commune) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(price_per_sqm, na.rm = TRUE),
+    Median = median(price_per_sqm, na.rm = TRUE),
+    SD = sd(price_per_sqm, na.rm = TRUE),
+    Q25 = quantile(price_per_sqm, 0.25, na.rm = TRUE),
+    Q75 = quantile(price_per_sqm, 0.75, na.rm = TRUE)
+  ) %>%
+  arrange(desc(Median))
+
+# Create a stylish table
+kable(arrondissement_stats, 
+      format = "html", 
+      col.names = c("Arrondissement", "Count", "Mean Price (€/sqm)", 
+                    "Median Price (€/sqm)", "SD (€/sqm)", 
+                    "25th Percentile (€/sqm)", "75th Percentile (€/sqm)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
+                full_width = F, 
+                position = "center") %>%
+  column_spec(1, bold = TRUE, border_right = TRUE) %>%
+  column_spec(2:7, border_left = TRUE, border_right = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "black") %>%
+  kable_styling(font_size = 12)
+```
+
+```{r}
+# Plot Price Per Sqm for comparison between regions
+ggplot(grouped_DVF, aes(x = location, y = price_per_sqm, fill = location)) +
+  geom_boxplot() +
+  labs(title = "Price per Square Meter: Inside vs. Outside Paris",
+       x = "Location",
+       y = "Price per Square Meter (€/sqm)") +
+  theme_minimal(base_size = 15) +  # Sets a larger base font size
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+        axis.title = element_text(size = 16, face = "bold"),  # Larger font size for axis titles
+        axis.text = element_text(size = 14))  # Larger font size for axis text
+
+```
+
+
+```{r}
+# Descriptive stats for "distance_to_border" by commune
+distance_by_commune <- grouped_DVF %>%
+  group_by(nom_commune) %>%
+  summarise(
+    min = min(distance_to_border, na.rm = TRUE),
+    max = max(distance_to_border, na.rm = TRUE),
+  ) %>%
+  arrange((min))  # Arrange by mean distance
+
+# Round the numeric values for better readability
+distance_by_commune <- distance_by_commune %>%
+  mutate(across(where(is.numeric), round, 2))
+
+# Create a nicely formatted table
+kable(distance_by_commune, format = "html", 
+      col.names = c("Commune", "Minimal Distance to Border", "Maximum Distance to Border")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
+                full_width = F, 
+                position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "black") %>%
+  kable_styling(font_size = 12)
+```
+
+```{r}
+# Aggregate data by year and location (inside vs. outside Paris)
+yearly_price_stats <- grouped_DVF %>%
+  mutate(year = as.numeric(format(date_mutation, "%Y"))) %>%
+  group_by(year, location) %>%
+  summarise(
+    avg_price_per_sqm = mean(price_per_sqm, na.rm = TRUE),
+    median_price_per_sqm = median(price_per_sqm, na.rm = TRUE)
+  )
+
+# Plot average price per square meter over time, split by location
+ggplot(yearly_price_stats, aes(x = year, y = avg_price_per_sqm, color = location)) +
+  geom_line(size = 1) +
+  labs(title = "Average Price per Square Meter Over Time",
+       x = "Year",
+       y = "Average Price per Square Meter (€/sqm)") +
+  theme_minimal(base_size = 15) +  # Sets a larger base font size
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+        axis.title = element_text(size = 16, face = "bold"),  # Larger font size for axis titles
+        axis.text = element_text(size = 14)) +  # Larger font size for axis text
+  scale_color_manual(values = c("Inside Paris" = "red", "Outside Paris" = "blue"))
+```
+
+
+# Estimation of the Treatment Effect
+Prepare for Diff-in-Disc Analysis
+```{r}
+# Visualize Data
+plot(grouped_DVF$Running_variable, 
+     grouped_DVF$price_per_sqm, 
+     main="Scatter plot of y vs x", 
+     xlab="Running Variable (x)", 
+     ylab="Outcome (y)")
+
+```
+
+
+```{r}
+# Prepare the regression equation
+grouped_DVF$group_indc <- ifelse(grouped_DVF$Running_variable > 0, 1, 0)
+grouped_DVF$time_indc <- ifelse(grouped_DVF$date_mutation >= "2019-07-01", 1, 0)
+grouped_DVF$treat_indc <- grouped_DVF$time_indc * grouped_DVF$group_indc
+
+grembi_equation <- price_per_sqm ~ Running_variable + group_indc*(1+Running_variable) + time_indc*(1+Running_variable) + treat_indc*(1+Running_variable)
+
+```
+
+## Average Bandwidths
+### Triangular Kernel
+```{r}
+# Get BW for pre and post-treatment
+rdd_before_tri <- rdrobust(y = grouped_DVF$price_per_sqm, 
+                           x = grouped_DVF$Running_variable, all = T, 
+                           subset = grouped_DVF$date_mutation < "2019-07-01", 
+                           kernel = "tri")
+rdd_after_tri <- rdrobust(y = grouped_DVF$price_per_sqm, 
+                          x = grouped_DVF$Running_variable, 
+                          all = T, subset = grouped_DVF$date_mutation >= "2019-07-01", 
+                          kernel = "tri")
+
+# Construct BW by averaging both bandwidths
+left_bw_tri <- rdd_before_tri$bws[1]
+right_bw_tri <- rdd_after_tri$bws[1]
+optimal_bw_avg_tri <- (left_bw_tri + right_bw_tri) / 2
+
+# Perform the regression
+w_tri_avg <- rdd_k_weights(x = grouped_DVF$Running_variable, c = 0, 
+                           h = optimal_bw_avg_tri, kernel = "triangular")
+
+grembi_model_tri <- lm(formula = grembi_equation, 
+                       data = grouped_DVF,
+                       subset = abs(Running_variable) < optimal_bw_avg_tri,
+                       weights = w_tri_avg)
+
+avg_bw_coef_tri <- grembi_model_tri$coefficients[[5]]  # save coef
+summary(grembi_model_tri)
+```
+## Uniform Kernel 
+```{r}
+# Repeat the procedure
+rdd_before_uni <- rdrobust(y = grouped_DVF$price_per_sqm, 
+                           x = grouped_DVF$Running_variable, all = T, 
+                           subset = grouped_DVF$date_mutation < "2019-07-01", 
+                           kernel = "uni")
+
+rdd_after_uni <- rdrobust(y = grouped_DVF$price_per_sqm, 
+                          x = grouped_DVF$Running_variable, 
+                          all = T, subset = grouped_DVF$date_mutation >= "2019-07-01",
+                          kernel = "uni")
+
+# Same for the BW
+left_bw_uni <- rdd_before_uni$bws[1]
+right_bw_uni <- rdd_after_uni$bws[1]
+optimal_bw_avg_uni <- (left_bw_uni + right_bw_uni) / 2
+
+# Same for regression
+w_uni_avg <- rdd_k_weights(x = grouped_DVF$Running_variable, 
+                           c = 0, h = optimal_bw_avg_uni, 
+                           kernel = "uniform")
+
+grembi_model_uni <- lm(formula = grembi_equation, data = grouped_DVF,
+                       subset = abs(Running_variable) < optimal_bw_avg_uni,
+                       weights = w_uni_avg)
+
+avg_bw_coef_uni <- grembi_model_uni$coefficients[[5]]  # save coef
+summary(grembi_model_uni)
+```
+
+## Plug-in Bandwidth
+### Triangular Kernel
+```{r}
+# Get bandwidth
+h_imbens_tri <- Imbens_BW(y = grouped_DVF$price_per_sqm, 
+                          x = grouped_DVF$Running_variable,
+                          c = 0, kernel = "triangular")
+
+# Get weights
+w_tri_imbens <- rdd_k_weights(x = grouped_DVF$Running_variable, c = 0, h = h_imbens_tri)
+
+# Run the regression
+tri_imbens <- lm(formula = grembi_equation, data = grouped_DVF,
+                 subset = abs(Running_variable) < h_imbens_tri, 
+                 weights = w_tri_imbens)
+
+imbens_coef_tri <- tri_imbens$coefficients[[5]]  # save coef
+summary(tri_imbens)
+```
+
+### Uniform Kernel
+```{r}
+# Idem
+h_imbens_uni <- Imbens_BW(y = grouped_DVF$price_per_sqm, 
+                          x = grouped_DVF$Running_variable,
+                          c = 0, kernel = "uniform")
+
+w_uni_imbens <- rdd_k_weights(x = grouped_DVF$Running_variable, 
+                              c = 0, h = h_imbens_uni, 
+                              kernel = "uniform")
+
+uni_imbens <- lm(formula = grembi_equation, data = grouped_DVF,
+                 subset = abs(Running_variable) < h_imbens_uni, 
+                 weights = w_uni_imbens)
+
+imbens_coef_uni <- uni_imbens$coefficients[[5]]  # save coef
+summary(uni_imbens)
+```
+
+## Adaptive SGD
+### Triangular Kernel
+```{r}
+# Same steps as before
+BW_T <- DiRD_BW(y = grouped_DVF$price_per_sqm, x = grouped_DVF$Running_variable, c = 0, 
+                time_var = grouped_DVF$date_mutation, t0 = "2019-07-01", 
+                ID = grouped_DVF$id_mutation, penalty_type = "log", 
+                max_iter = 100)$optimal_h[1]
+
+# Weights
+w_tri_sgd <- rdd_k_weights(x = grouped_DVF$Running_variable, c = 0, 
+                           h = BW_T, kernel = "triangular")
+
+# Regression and coef
+reg_tri_sgd <- lm(formula = grembi_equation, data = grouped_DVF, 
+                  subset = abs(Running_variable) < BW_T, weights = w_tri_sgd)
+reg_tri_sgd_coef <- reg_tri_sgd$coefficients[[5]]
+summary(reg_tri_sgd)
+```
+
+
+### Uniform Kernel
+```{r}
+# Idem
+BW_U <- DiRD_BW(y = grouped_DVF$price_per_sqm, x = grouped_DVF$Running_variable, c = 0, 
+                time_var = grouped_DVF$date_mutation, t0 = "2019-07-01", 
+                ID = grouped_DVF$id_mutation, kernel = "uniform", penalty_type = "log", max_iter = 100)$optimal_h[1]
+
+w_uni_sgd <- rdd_k_weights(x = grouped_DVF$Running_variable, c = 0, h = BW_U, kernel = "uniform")
+
+unif_sgd <- lm(formula = grembi_equation, data = grouped_DVF, 
+               subset = abs(Running_variable) < BW_U,
+               weights = w_uni_sgd)
+
+unif_sgd_coef <- unif_sgd$coefficients[[5]]
+summary(unif_sgd)
+```
+
+
+```{r}
+# Create the data frame
+bw_and_coef_table <- data.frame(
+  Kernel = c("Triangular", "Uniform", "Triangular", "Uniform", "Triangular", "Uniform"),
+  `Imbens Plug-in Bandwidth Estimator` = c(h_imbens_tri, h_imbens_uni, NA, NA, NA, NA),
+  `AVG of 2 bandwidths` = c(NA, NA, optimal_bw_avg_tri, optimal_bw_avg_uni, NA, NA),
+  `Adaptive SGD` = c(NA, NA, NA, NA, BW_T, BW_U),
+  `Treatment Effect` = c(imbens_coef_tri, imbens_coef_uni, avg_bw_coef_tri, avg_bw_coef_uni, reg_tri_sgd_coef, unif_sgd_coef)
+)
+
+# Print the table
+kable(bw_and_coef_table,
+      col.names = c("Kernel", "Imbens Plug-in Bandwidth Estimator", 
+                    "AVG of 2 bandwidths", "Adaptive SGD", "Treatment Effect"))
+```
+
+
+# Clustering Spatial
+We use the max-p algorithm to group spatial units into homogeneous regions. With this, we can create a partition of space that makes sense from the point of view of the object studied while guaranteeing a sufficient number of observations in each region to make estimates.
+
+## CLuster K-means
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(cluster)
+
+data_for_clustering <- grouped_DVF %>%
+  select(latitude, longitude, price_per_sqm, distance_to_border)
+
+data_for_clustering <- data_for_clustering %>%
+  filter(distance_to_border < optimal_bw_avg_tri)
+
+# Determine the WSS for 1 to 20 clusters
+max_clusters <- 10
+wss <- sapply(1:max_clusters, function(k){
+  kmeans(data_for_clustering, centers=k, nstart=10)$tot.withinss
+})
+
+# Calculate the differences in WSS to find the elbow (inflection point)
+wss_diff <- diff(wss)
+wss_diff2 <- diff(wss_diff)
+
+# Identify the elbow point
+elbow <- which.max(wss_diff2) + 1  # Add 1 because diff reduces the length by 1
+
+# Plot the elbow plot with the identified elbow point
+# Plot with increased font size for axes and title
+plot(1:max_clusters, wss, type="b", 
+     xlab="Number of Clusters", ylab="Within groups sum of squares",
+     main = "Elbow Method for Optimal Number of Clusters", 
+     cex.lab = 1.5,   # Increases axis label size
+     cex.axis = 1.2,  # Increases axis tick mark label size
+     cex.main = 1.8)  # Increases main title size
+
+# Add a vertical line at the elbow point
+abline(v = elbow, col = "red", lty = 2)
+
+# Output the optimal number of clusters
+cat("Optimal number of clusters (elbow point) is:", elbow, "\n")
+```
+
+```{r}
+# Choose an optimal number of clusters
+k <- elbow
+kmeans_result <- kmeans(data_for_clustering, centers=k)
+
+# Add the cluster results back to your original data
+data_for_clustering$cluster <- kmeans_result$cluster
+
+# Analyze the clusters
+cluster_summary <- data_for_clustering %>%
+  group_by(cluster) %>%
+  summarize(mean_price = mean(price_per_sqm),
+            median_price = median(price_per_sqm),
+            count = n())
+
+print(cluster_summary)
+```
+
+```{r}
+# Regression analysis within clusters
+results <- list()
+for (i in 1:k) {
+  cluster_data <- grouped_DVF %>% filter(cluster == i)
+  model <- lm(grembi_equation, data = cluster_data, subset = grouped_DVF$distance_to_border < h_imbens_tri)
+  results[[i]] <- summary(model)
+}
+
+# Inspect the results for each cluster
+for (i in 1:k) {
+  cat("Cluster", i, "results:\n")
+  print(results[[i]])
+  cat("\n")
+}
+```
+```{r}
+results <- list()
+for (i in 1:k) {
+  cluster_data <- grouped_DVF %>% filter(cluster == i)
+  model <- lm(grembi_equation, data = cluster_data, subset = grouped_DVF$distance_to_border < optimal_bw_avg_tri)
+  results[[i]] <- summary(model)
+}
+
+# Inspect the results for each cluster
+for (i in 1:k) {
+  cat("Cluster", i, "results:\n")
+  print(results[[i]])
+  cat("\n")
+}
+```
+
+```{r}
+# Define the subset conditions in a named list
+subset_conditions <- list(
+  h_imbens_tri = grouped_DVF$distance_to_border < h_imbens_tri,
+  h_imbens_uni = grouped_DVF$distance_to_border < h_imbens_uni,
+  optimal_bw_avg_tri = grouped_DVF$distance_to_border < optimal_bw_avg_tri,
+  optimal_bw_avg_uni = grouped_DVF$distance_to_border < optimal_bw_avg_uni,
+  BW_T = grouped_DVF$distance_to_border < BW_T,
+  BW_U = grouped_DVF$distance_to_border < BW_U
+)
+
+# Create an empty list to store results for all subsets
+all_results <- list()
+
+# Iterate over each subset condition and perform regression within each cluster
+for (subset_name in names(subset_conditions)) {
+  
+  # Create a list to store the results for each cluster for the current subset
+  subset_results <- list()
+  
+  for (i in 1:k) {
+    # Filter the data for the current cluster
+    cluster_data <- grouped_DVF %>% filter(cluster == i)
+    
+    # Run the regression for the current subset condition
+    model <- lm(grembi_equation, data = cluster_data, subset = subset_conditions[[subset_name]])
+    subset_results[[i]] <- summary(model)
+  }
+  
+  # Store the results for the current subset in the main results list
+  all_results[[subset_name]] <- subset_results
+}
+
+# Inspect the results for each subset and cluster
+for (subset_name in names(all_results)) {
+  cat("\nResults for subset:", subset_name, "\n")
+  
+  for (i in 1:k) {
+    cat("Cluster", i, "results:\n")
+    print(all_results[[subset_name]][[i]])
+    cat("\n")
+  }
+}
+```
+
+```{r}
+# plot clusters
+ggplot(grouped_DVF %>% filter(distance_to_border <= optimal_bw_avg_tri),  
+       aes(x = longitude, y = latitude, color = as.factor(cluster))) +  
+  geom_point() + 
+  theme_minimal() + 
+  labs(color = "Cluster") + 
+  ggtitle("Analyzed Observations Split into to Clusters") +
+  theme(
+    axis.text = element_text(size = 14),    # Increases font size for axis text
+    axis.title = element_text(size = 16),   # Increases font size for axis titles
+    plot.title = element_text(size = 18)    # Increases font size for the plot title
+  )
+
+```
+
+## Max p-regions
+### Weights
+```{r}
+# Convert dataframe to spatial object
+clst_grouped_DVF <- st_as_sf(grouped_DVF, 
+                             coords = c("longitude", "latitude"), crs = 4326)
+
+# Queen weights (for contiguity)
+knn_w <- knn_weights(clst_grouped_DVF, 6)
+summary(knn_w)
+```
+
+### Run maxp_tabu
+```{r}
+# Ensure these objects are data frames
+df <- clst_grouped_DVF["price_per_sqm"]
+bound_variable_df <- data.frame(price_per_sqm = clst_grouped_DVF$price_per_sqm)
+min_bound_value <- quantile(clst_grouped_DVF$price_per_sqm, 0.25, na.rm = TRUE)
+
+# run the tabu algorithm
+result <- maxp_tabu(
+w = knn_w,
+df = df,  
+bound_variable = bound_variable_df,
+min_bound = min_bound_value,
+distance_method = "euclidean"
+)
+
+```
+
+
