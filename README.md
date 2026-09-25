@@ -23,7 +23,8 @@ Simulation/
   sim_data.csv
 Bandwidth/
   Imbens/Imbens_BW.Rmd     Imbens–Kalyanaraman plug-in bandwidth
-  SGD/BW_Functions.Rmd     Adaptive SGD bandwidth selector (final version)
+  SGD/BW_Functions.R       Bandwidth functions (IK plug-in, adaptive SGD), sourced by the notebooks
+  SGD/BW_Functions.Rmd     Documentation of BW_Functions.R
   SGD/Functions/           Earlier drafts (Outdated/) and unfinished variants (Unfinished/)
 Application/
   DVF_database.Rmd         Builds grouped_DVF.csv from raw DVF + commune shapes

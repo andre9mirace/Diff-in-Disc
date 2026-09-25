@@ -25,6 +25,9 @@ library(kableExtra)
 library(e1071)  # For skewness function
 library(tidyverse)
 library(rgeoda) # for maxp_tabu
+
+# Load the bandwidth functions (Imbens_BW, rdd_k_weights, DiRD_BW, ...)
+source(here::here("Bandwidth/SGD/BW_Functions.R"))
 ```
 
 Load data
@@ -448,7 +451,8 @@ summary(uni_imbens)
 ## Adaptive SGD
 ### Triangular Kernel
 ```{r}
-# Same steps as before
+# Same steps as before (the algorithm draws random starting bandwidths)
+set.seed(123)
 BW_T <- DiRD_BW(y = grouped_DVF$price_per_sqm, x = grouped_DVF$Running_variable, c = 0, 
                 time_var = grouped_DVF$date_mutation, t0 = "2019-07-01", 
                 ID = grouped_DVF$id_mutation, penalty_type = "log", 
@@ -469,6 +473,7 @@ summary(reg_tri_sgd)
 ### Uniform Kernel
 ```{r}
 # Idem
+set.seed(123)
 BW_U <- DiRD_BW(y = grouped_DVF$price_per_sqm, x = grouped_DVF$Running_variable, c = 0, 
                 time_var = grouped_DVF$date_mutation, t0 = "2019-07-01", 
                 ID = grouped_DVF$id_mutation, kernel = "uniform", penalty_type = "log", max_iter = 100)$optimal_h[1]

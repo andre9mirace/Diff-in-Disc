@@ -17,6 +17,9 @@ library(rdrobust)
 library(knitr)
 library(kableExtra)
 library(ggplot2)
+
+# Load the bandwidth functions (Imbens_BW, rdd_k_weights, DiRD_BW, ...)
+source(here::here("Bandwidth/SGD/BW_Functions.R"))
 ```
 
 ```{r}
@@ -59,7 +62,7 @@ grembi_equation <- Price_m2 ~ Distance_to_Border + treated_indc*(1+Distance_to_B
 
 # Run regression
 biased_grembi <- lm(formula = grembi_equation, data = data)
-coef_grembi_no_bw <- biased_grembi$coefficients[[4]]
+coef_grembi_no_bw <- biased_grembi$coefficients[["did"]]
 summary(biased_grembi)
 ```
 
@@ -176,7 +179,8 @@ imbens_coef_uni <- uni_imbens$coefficients[[5]] # save coef
 ## Adaptive SGD
 ### Triangular kernel
 ```{r}
-# Same steps as before
+# Same steps as before (the algorithm draws random starting bandwidths)
+set.seed(123)
 BW_T <- DiRD_BW(y=data$Price_m2, x=data$Distance_to_Border, c=0, t0=3,
                 time_var = data$Year, ID=data$PropertyID)$optimal_h[1]
 
@@ -192,6 +196,7 @@ reg_tri_sgd_coef <- reg_tri_sgd$coefficients[[5]]
 ### Uniform kernel 
 ```{r}
 # Idem
+set.seed(123)
 BW_U <- DiRD_BW(y=data$Price_m2, x=data$Distance_to_Border, c=0, t0=3,
                 time_var = data$Year, ID=data$PropertyID, kernel = "uniform")$optimal_h[1]
 
