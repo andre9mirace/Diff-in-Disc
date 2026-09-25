@@ -48,27 +48,31 @@ Objective function of the algorithm, $J(h) = p(h) \cdot MSE(h)$, computed on eve
 ```
 
 
-## find_next_h
-In this context, we "manually" compute the gradient of the MSE function to perform a stochastic gradient descent by randomly selecting a bandwidth value $(h_0)$ and then finding the value for h just above it to compute this "infinitesimal calculation".
-```{r find_next_h}
+## MSE_gradient
+There is no analytical form of $J(h)$, so its gradient is computed with a central finite difference whose step is proportional to the bandwidth:
+$$\nabla J(h) \approx \frac{J(h + \delta) - J(h - \delta)}{2\delta}, \qquad \delta = 0.02\, h$$
+The step spans many observations, so the gradient captures the effect of the sample growing with $h$ (which is what the penalty term acts on). A difference with the next data point $h^+$ could not: since the sample is $|X_i - c| < h$, the observation at $h^+$ is excluded from both $J(h)$ and $J(h^+)$, and the difference only reflected the change in kernel weights.
+```{r MSE_gradient}
 ```
 
 # Main Functions
-## MSE_Gradient_0 
-This function is used to calculate the Gradient of the MSE corresponding to the randomly chosen $h_0$. 
+## MSE_Gradient_0
+This function is used to calculate the Gradient of the MSE corresponding to the randomly chosen $h_0$.
 This will later be used as our initialization for the Stochastic Gradient Descent Algorithm for MSE minimization.This function uses both of the previous functions.\\
-MSE_Gradient0 function yields a vector with 3 values: a random BW (h_0), the next BW (h_plus) and the MSE Gradient at h_0 (Gradient_0). It returns `NA`s if no computable h_0 is found after 100 draws.
+MSE_Gradient0 function yields a vector with 3 values: a random BW (h_0), its penalized MSE and the MSE Gradient at h_0 (Gradient_0). It returns `NA`s if no computable h_0 is found after 100 draws.
 
-`h_candidates` are the values h_0 can be drawn from (the current quantile interval), while `h_values` are all the bandwidths of the sample. The MSE is always computed on the full `data` with $|X_i - c| < h$.
+`h_candidates` are the values h_0 can be drawn from (the current quantile interval). The MSE is always computed on the full `data` with $|X_i - c| < h$.
 ```{r MSE_Gradient0}
 ```
 
-## DiRD_BW 
+## DiRD_BW
 
 This function compiles every function created so far to perform a Stochastic Gradient Descent to minimize the MSE of our regression to find the optimal bandwidth. \\
 This function is basically divided in 2 loops : \\
-We will call the while loop a for loop that ahs several stopping criteria. The 'while' loop uses a gradient descent algorithm with an ADAGrad method for computing and updating the learning rate.\\ 
+We will call the while loop a for loop that ahs several stopping criteria. The 'while' loop uses a gradient descent algorithm with an ADAGrad method for computing and updating the learning rate.\\
 The 'for' loop acts as the "stochastic part" in SGD to compare local minima to find a global minimum.\\
+
+The AdaGrad learning rate at iteration $j$ is $\eta_j = \eta / \sqrt{\sum_{i \le j} \nabla J(h_i)^2}$, where $\eta$ is a tenth of the width of the current quantile interval, so the steps are expressed in the unit of the running variable. Each descent keeps the best bandwidth it visited.
 
 
 ```{r DiRD_BW}

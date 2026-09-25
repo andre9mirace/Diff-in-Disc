@@ -164,51 +164,35 @@ penalized_MSE <- function(data, h, c, t0, N, kernel = "triangular", penalty_type
   return(penalty * mse)
 }
 
-## ---- find_next_h ----
-# Function to find the closest h given a current h value from a BW set
-find_next_h <- function(current_h, h_values) {
-  # Ensure h_values is not empty
-  if (length(h_values) == 0) {
-    stop("h_values cannot be empty")
-  }
-  # Subset to find all values greater than the current h
-  possible_values <- h_values[h_values > current_h]
-  
-  # If there are any higher values, return the minimum
-  if (length(possible_values) > 0) {
-    return(min(possible_values))
-  } else {
-    
-    # Find values less than the current h and return the maximum of these
-    lower_values <- h_values[h_values < current_h]
-    if (length(lower_values) > 0) {
-      return(max(lower_values))
-    } else {
-      # No higher or lower values available = stop
-      stop("No higher or lower values found for the given h")
-    }
-  }
+## ---- MSE_gradient ----
+# Central finite difference of the penalized MSE with a step proportional to h
+MSE_gradient <- function(data, h, c, t0, N, kernel = "triangular", penalty_type = "default",
+                         step = 0.02){
+  delta <- step * h
+  mse_up <- penalized_MSE(data = data, h = h + delta, c = c, t0 = t0, N = N,
+                          kernel = kernel, penalty_type = penalty_type)
+  mse_down <- penalized_MSE(data = data, h = h - delta, c = c, t0 = t0, N = N,
+                            kernel = kernel, penalty_type = penalty_type)
+  return((mse_up - mse_down) / (2 * delta))
 }
 
 ## ---- MSE_Gradient0 ----
-MSE_Gradient0 <- function(data, h_candidates, h_values, c, t0, N,
+MSE_Gradient0 <- function(data, h_candidates, c, t0, N,
                           kernel="triangular", penalty_type="default"){
 
   for (attempt in 1:100) {
-    # Randomly pick a random h and the one just above (h_plus)
+    # Randomly pick a starting bandwidth
     h_0 <- h_candidates[sample.int(length(h_candidates), 1)]
-    h_plus <- find_next_h(current_h = h_0, h_values = h_values)
 
-    # Penalized MSE for both bandwidths
+    # Penalized MSE and its gradient at h_0
     mse_0 <- penalized_MSE(data = data, h = h_0, c = c, t0 = t0, N = N,
                            kernel = kernel, penalty_type = penalty_type)
-    mse_plus <- penalized_MSE(data = data, h = h_plus, c = c, t0 = t0, N = N,
-                              kernel = kernel, penalty_type = penalty_type)
+    Gradient_0 <- MSE_gradient(data = data, h = h_0, c = c, t0 = t0, N = N,
+                               kernel = kernel, penalty_type = penalty_type)
 
-    # If data is insufficient for either bandwidth, draw another h_0
-    if (!is.na(mse_0) & !is.na(mse_plus)) {
-      MSE_gradient <- (mse_plus - mse_0) / (h_plus - h_0)
-      return(c(h_0, h_plus, MSE_gradient))
+    # If data is insufficient, draw another h_0
+    if (!is.na(mse_0) & !is.na(Gradient_0)) {
+      return(c(h_0, mse_0, Gradient_0))
     }
   }
   return(c(NA, NA, NA))
@@ -217,7 +201,7 @@ MSE_Gradient0 <- function(data, h_candidates, h_values, c, t0, N,
 ## ---- DiRD_BW ----
 DiRD_BW <- function(y, x, c, time_var, t0, ID, 
                     kernel = "triangular", penalty_type = "default",
-                    max_iter=10, max_epochs=500){
+                    max_iter=10, max_epochs=50){
   ## Initialization
 
   # Preparation
@@ -254,59 +238,57 @@ DiRD_BW <- function(y, x, c, time_var, t0, ID,
     h_candidates <- h_values[h_values >= h_min & h_values < h_max]
     if (length(h_candidates) == 0) next  # Skip if no data in the current interval
 
-    N_int <- sum(data$h >= h_min & data$h < h_max)
+    # AdaGrad base learning rate: a tenth of the interval width, in the unit of x
+    eta <- initial_lr * (h_max - h_min) / 10
 
     for(i in 1:max_epochs){
 
       # Initialization : h0 and gradient0 to do a stochastic gradient descent
       gradient_details <- MSE_Gradient0(data = data, h_candidates = h_candidates,
-                                        h_values = h_values, c = c, t0 = t0, N = N,
+                                        c = c, t0 = t0, N = N,
                                         kernel = kernel, penalty_type = penalty_type)
       if (anyNA(gradient_details)) next
       h_0 <- gradient_details[1]
-      Gradient_0 <- gradient_details[3]
 
       # Prepare for iterations (mse_j always matches h_j)
       h_j <- h_0
-      mse_j <- penalized_MSE(data = data, h = h_j, c = c, t0 = t0, N = N,
-                             kernel = kernel, penalty_type = penalty_type)
-      Gradient_j <- Gradient_0
-      accumulated_sq_grad <- Gradient_j^2
-      adjusted_lr <- log(N_int)*initial_lr / sqrt(accumulated_sq_grad + epsilon)
+      mse_j <- gradient_details[2]
+      Gradient_j <- gradient_details[3]
+      accumulated_sq_grad <- 0
+
+      # Best bandwidth visited during this descent
+      h_best <- h_j
+      mse_best <- mse_j
 
       unchanged_iter_count <- 0  # Counter for unchanged h_j
 
       for(iter in (1:max_iter)){
 
-        # AdaGrad update for Gradient_j
+        # AdaGrad update: eta over the root of the sum of all squared gradients
         accumulated_sq_grad <- accumulated_sq_grad + Gradient_j^2
-        adjusted_lr <- log(N_int)*adjusted_lr / sqrt(accumulated_sq_grad + epsilon)
+        adjusted_lr <- eta / sqrt(accumulated_sq_grad + epsilon)
 
         # SGD Update
         h_j_new <- h_j - adjusted_lr * Gradient_j
-        if (h_j_new <= 0) break
 
-        # Closest h value above h_j_new
-        h_j_plus <- find_next_h(h_j_new, h_values)
+        # Stay within the range of admissible bandwidths
+        if (h_j_new <= min(h_values) | h_j_new >= max(h_values)) break
 
-        # Handle hj max scenario
-        if (h_j_plus < h_j_new){
-          break
-        }
-
-        # Penalized MSE for the new bandwidth and the one just above
+        # Penalized MSE and its gradient at the new bandwidth
         mse_j_new <- penalized_MSE(data = data, h = h_j_new, c = c, t0 = t0, N = N,
                                    kernel = kernel, penalty_type = penalty_type)
-        mse_j_plus <- penalized_MSE(data = data, h = h_j_plus, c = c, t0 = t0, N = N,
-                                    kernel = kernel, penalty_type = penalty_type)
+        Gradient_j <- MSE_gradient(data = data, h = h_j_new, c = c, t0 = t0, N = N,
+                                   kernel = kernel, penalty_type = penalty_type)
 
         # Handle insufficient data scenario
-        if (is.na(mse_j_new) | is.na(mse_j_plus)) {
+        if (is.na(mse_j_new) | is.na(Gradient_j)) {
           break
         }
 
-        # Compute Gradient
-        Gradient_j <- (mse_j_new - mse_j_plus) / (h_j_new - h_j_plus)
+        if (mse_j_new < mse_best) {
+          h_best <- h_j_new
+          mse_best <- mse_j_new
+        }
 
         # Threshold
         if (abs(mse_j_new-mse_j) < 1/log(N)){
@@ -329,8 +311,8 @@ DiRD_BW <- function(y, x, c, time_var, t0, ID,
       }
       # store starting point, local minimizer and minimums for MSE
       h0_vector <- c(h0_vector, h_0)
-      h_vector <- c(h_vector, h_j)
-      mse_vector <- c(mse_vector, mse_j)
+      h_vector <- c(h_vector, h_best)
+      mse_vector <- c(mse_vector, mse_best)
 
     }
   }
