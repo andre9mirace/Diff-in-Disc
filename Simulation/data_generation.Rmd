@@ -142,5 +142,5 @@ data <- data %>%
 ```
 
 ```{r}
-write.csv(data, "~/Desktop/Diff-in-Disc/Simulation/sim_data.csv")
+write.csv(data, here::here("Simulation/sim_data.csv"))
 ```

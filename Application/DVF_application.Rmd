@@ -29,7 +29,7 @@ library(rgeoda) # for maxp_tabu
 
 Load data
 ```{r}
-grouped_DVF <- fread("~/Desktop/Diff-in-Disc/Application/DVF/grouped_DVF.csv")
+grouped_DVF <- fread(here::here("Application/DVF/grouped_DVF.csv"))
 grouped_DVF <- grouped_DVF%>%select(-V1)
 ```
 

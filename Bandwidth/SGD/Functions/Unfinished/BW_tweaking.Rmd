@@ -14,7 +14,7 @@ Ce document recapitule l'ensemble de fonctions utilisées pour trouver la bandwi
 
 ```{r}
 # Read data
-df <- read.csv('~/Desktop/Diff-in-Disc/Simulation/sim_data.csv')
+df <- read.csv(here::here("Simulation/sim_data.csv"))
 ```
 
 # Prior Functions

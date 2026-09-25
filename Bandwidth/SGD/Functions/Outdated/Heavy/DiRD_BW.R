@@ -1,6 +1,6 @@
-library(ggplot)
+library(ggplot2)
 # Read data
-df <- read.csv('~/Desktop/Diff-in-Disc/Simulation/sim_data.csv')
+df <- read.csv(here::here("Simulation/sim_data.csv"))
 
 MSE_DiRD <- function(y, x, time_var, c, t0){
   # Prepare regression

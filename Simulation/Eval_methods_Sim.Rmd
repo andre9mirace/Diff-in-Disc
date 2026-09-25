@@ -1,7 +1,7 @@
 ---
 title: "Eval_methods"
 output:
-  pdata_document: default
+  pdf_document: default
   html_document: default
 date: "2024-03-26"
 ---
@@ -21,7 +21,7 @@ library(ggplot2)
 
 ```{r}
 # Load data from the simulated database
-data <- read.csv('~/Desktop/Diff-in-Disc/Simulation/sim_data.csv')
+data <- read.csv(here::here("Simulation/sim_data.csv"))
 df <- data
 ```
 # Treatment estimation methods

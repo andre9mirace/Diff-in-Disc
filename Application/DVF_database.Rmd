@@ -29,7 +29,7 @@ library(spdep) # for kNN weights
 and the data set for the shape of Ile de France
 ```{r}
 # Municipalities' shapes and boundaries
-paris_shape <- st_read("/Users/andre/Desktop/Diff-in-disc/Application/communes-dile-de-france-au-01-janvier/communes-dile-de-france-au-01-janvier.shp")
+paris_shape <- st_read(here::here("Application/communes-dile-de-france-au-01-janvier/communes-dile-de-france-au-01-janvier.shp"))
 ```
 
 ## Borders
@@ -95,9 +95,9 @@ Calculate the distances from then properties to the border and add them to the D
 ## Create the complete DVF database
 ```{r}
 # Load DB
-dvf_2k19 <- fread("/Users/andre/Desktop/Diff-in-Disc/Application/DVF/2019_full.csv")
-dvf_2k20 <- fread("/Users/andre/Desktop/Diff-in-Disc/Application/DVF/2020_full.csv")
-dvf_2k21 <- fread("/Users/andre/Desktop/Diff-in-Disc/Application/DVF/2021_full.csv")
+dvf_2k19 <- fread(here::here("Application/DVF/2019_full.csv"))
+dvf_2k20 <- fread(here::here("Application/DVF/2020_full.csv"))
+dvf_2k21 <- fread(here::here("Application/DVF/2021_full.csv"))
 
 # Filter from 06/2021 onwards
 dvf_2k21 <- dvf_2k21 %>%
@@ -193,5 +193,5 @@ grouped_DVF <- grouped_DVF %>%
 
 ```{r}
 # Combine the three data frames
-write.csv(grouped_DVF, "~/Desktop/Diff-in-Disc/Application/DVF/grouped_DVF.csv")
+write.csv(grouped_DVF, here::here("Application/DVF/grouped_DVF.csv"))
 ```
