@@ -21,3 +21,18 @@ renv/local/
 
 # Raw DVF extracts (~1 GB, download from data.gouv.fr; see README)
 Application/DVF/*_full.csv
+
+# LaTeX build files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc

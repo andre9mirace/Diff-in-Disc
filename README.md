@@ -32,6 +32,7 @@ Application/
   communes-dile-de-france-au-01-janvier/   Commune boundaries (shapefile)
   Graphs/                  Figures used in the report
 Presentation/              Defense slides and images
+Manuscript/                LaTeX source of the report body (V1.tex; pdfLaTeX + Biber, e.g. on Overleaf)
 ```
 
 ## Running the code
