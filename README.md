@@ -21,6 +21,11 @@ Simulation/
   data_generation.Rmd      Simulated Paris / Issy-les-Moulineaux panel -> sim_data.csv
   Eval_methods_Sim.Rmd     DiD, RD and Diff-in-Disc estimates on the simulated data
   sim_data.csv
+  MonteCarlo/              Comparison of bandwidth selectors over many simulated datasets
+    dgp.R                  The simulation as a function (seed, sharp or smooth design)
+    estimators.R           IK, AVG rdrobust, SGD criterion and first-difference rdrobust
+    run_montecarlo.R       Runs the replications in parallel -> results/mc_results.rds
+    MonteCarlo.Rmd         Report: bias, RMSE, coverage and oracle bandwidth
 Bandwidth/
   Imbens/Imbens_BW.Rmd     Imbens–Kalyanaraman plug-in bandwidth
   SGD/BW_Functions.R       Bandwidth functions (IK plug-in, adaptive SGD), sourced by the notebooks
@@ -47,6 +52,10 @@ Manuscript/                LaTeX source of the report body (V1.tex; pdfLaTeX + B
    3. `Bandwidth/Imbens/Imbens_BW.Rmd` and `Bandwidth/SGD/BW_Functions.Rmd`
    4. `Application/DVF_database.Rmd` (needs the raw DVF files, see below)
    5. `Application/DVF_application.Rmd` (runs directly from the versioned `grouped_DVF.csv`)
+4. Monte Carlo (optional): `Rscript Simulation/MonteCarlo/run_montecarlo.R 1000 10` runs 1,000
+   replications on 10 cores (about 45 minutes) and writes `results/mc_results.rds`; then knit
+   `Simulation/MonteCarlo/MonteCarlo.Rmd`. The results file is versioned, so the report can be
+   knitted without re-running the simulations.
 
 ### Raw DVF data
 
